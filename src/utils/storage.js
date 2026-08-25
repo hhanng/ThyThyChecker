@@ -1,31 +1,30 @@
-// Thin localStorage wrapper. All app data lives in the browser —
-// no backend required for the core tracker features.
+// Thin localStorage wrapper. Every piece of app data lives under one of
+// these keys as plain JSON, so it survives page reloads with no backend.
 
-const KEY_PREFIX = 'studyhub_';
+export const STORAGE_KEYS = {
+  homework: 'studyhub_homework',
+  exams: 'studyhub_exams',
+  notes: 'studyhub_notes',
+  flashcards: 'studyhub_flashcards',
+  quizHistory: 'studyhub_quizHistory',
+  dailyUploads: 'studyhub_dailyUploads',
+  settings: 'studyhub_settings',
+}
 
-export function load(key, fallback) {
+export function loadFromStorage(key, fallback) {
   try {
-    const raw = localStorage.getItem(KEY_PREFIX + key);
-    return raw ? JSON.parse(raw) : fallback;
+    const raw = window.localStorage.getItem(key)
+    if (raw === null) return fallback
+    return JSON.parse(raw)
   } catch {
-    return fallback;
+    return fallback
   }
 }
 
-export function save(key, value) {
-  localStorage.setItem(KEY_PREFIX + key, JSON.stringify(value));
-}
-
-export function uid() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-export function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-export function daysUntil(dateStr) {
-  const today = new Date(todayStr());
-  const target = new Date(dateStr);
-  return Math.round((target - today) / 86400000);
+export function saveToStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // localStorage can be unavailable (private browsing quota, etc). Ignore.
+  }
 }

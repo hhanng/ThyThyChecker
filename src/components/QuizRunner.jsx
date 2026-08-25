@@ -1,98 +1,143 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
+import { gradeShortAnswers, GeminiError } from '../utils/gemini'
+import { todayISO } from '../utils/date'
+import './QuizRunner.css'
 
-const MASTERY_THRESHOLD = 0.85
+export const MASTERY_THRESHOLD = 85
 
-export default function QuizRunner({ quiz, onComplete, onCancel }) {
+export default function QuizRunner({ quiz, subject, apiKey, onComplete }) {
   const [answers, setAnswers] = useState({})
-  const [submitted, setSubmitted] = useState(false)
+  const [grading, setGrading] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState(null)
 
-  const questions = quiz.questions || []
+  const allAnswered = quiz.every((q) => (answers[q.id] || '').trim().length > 0)
 
-  function setAnswer(i, value) {
-    setAnswers({ ...answers, [i]: value })
-  }
+  async function handleSubmit() {
+    setGrading(true)
+    setError('')
+    try {
+      const shortItems = quiz
+        .filter((q) => q.type === 'short')
+        .map((q) => ({ ...q, studentAnswer: answers[q.id] || '' }))
+      const shortGrades = await gradeShortAnswers(apiKey, subject, shortItems)
 
-  function grade() {
-    let correct = 0
-    const missed = []
-    questions.forEach((q, i) => {
-      const given = (answers[i] || '').trim().toLowerCase()
-      const expected = (q.answer || '').trim().toLowerCase()
-      if (given && given === expected) {
-        correct++
-      } else {
-        missed.push(q.topic || q.question)
+      let correctCount = 0
+      const wrongItems = []
+      for (const q of quiz) {
+        const yourAnswer = answers[q.id] || ''
+        let correct
+        let feedback = ''
+        if (q.type === 'mcq') {
+          correct = yourAnswer === q.correctAnswer
+        } else {
+          const grade = shortGrades[q.id]
+          correct = grade?.correct ?? false
+          feedback = grade?.feedback || ''
+        }
+        if (correct) {
+          correctCount += 1
+        } else {
+          wrongItems.push({
+            topic: q.topic,
+            question: q.question,
+            yourAnswer,
+            correctAnswer: q.correctAnswer,
+            feedback,
+          })
+        }
       }
-    })
-    return { score: questions.length ? correct / questions.length : 0, missedTopics: missed }
+
+      const percent = Math.round((correctCount / quiz.length) * 100)
+      const passed = percent >= MASTERY_THRESHOLD
+      const finalResult = {
+        subject,
+        date: todayISO(),
+        score: correctCount,
+        total: quiz.length,
+        percent,
+        passed,
+        wrongItems,
+      }
+      setResult(finalResult)
+      onComplete?.(finalResult)
+    } catch (err) {
+      setError(err instanceof GeminiError ? err.message : 'Something went wrong grading the quiz.')
+    } finally {
+      setGrading(false)
+    }
   }
 
-  function handleSubmit() {
-    setSubmitted(true)
-  }
-
-  if (submitted) {
-    const result = grade()
-    const pct = Math.round(result.score * 100)
-    const passed = result.score >= MASTERY_THRESHOLD
-
+  if (result) {
     return (
-      <div>
-        <h2 className="section-title">Quiz Results</h2>
-        <div className="row" style={{ marginBottom: 16 }}>
-          <span className={`pill ${passed ? 'pill-good' : 'pill-behind'}`} style={{ fontSize: 15, padding: '6px 14px' }}>
-            {pct}% {passed ? '— understood' : '— needs review'}
-          </span>
+      <div className="quiz-result">
+        <div className={'quiz-score-banner' + (result.passed ? ' passed' : ' failed')}>
+          <div className="quiz-score-number">{result.percent}%</div>
+          <div>
+            <strong>{result.passed ? "Mastered! 🎉" : 'Not quite there yet'}</strong>
+            <p className="hint-text" style={{ margin: 0 }}>
+              {result.score}/{result.total} correct · needs {MASTERY_THRESHOLD}% to count as understood
+            </p>
+          </div>
         </div>
 
-        {!passed && result.missedTopics.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div className="section-desc" style={{ marginBottom: 8 }}>Review these before moving on:</div>
-            {result.missedTopics.map((t, i) => (
-              <div className="task-item" key={i}>
-                <span className="task-title">{t}</span>
+        {result.wrongItems.length > 0 && (
+          <div>
+            <h4 style={{ marginTop: 18 }}>Questions/topics to review</h4>
+            {result.wrongItems.map((item, i) => (
+              <div key={i} className="card quiz-wrong-item">
+                <span className="badge badge-outline" style={{ color: 'var(--pink-600)' }}>{item.topic}</span>
+                <p className="quiz-wrong-question">{item.question}</p>
+                {item.yourAnswer && <p className="hint-text">Your answer: {item.yourAnswer}</p>}
+                <p className="hint-text">Correct: {item.correctAnswer}</p>
+                {item.feedback && <p className="hint-text">{item.feedback}</p>}
               </div>
             ))}
           </div>
         )}
-
-        <button className="btn btn-primary" onClick={() => onComplete(result)}>Save and continue</button>
       </div>
     )
   }
 
   return (
     <div>
-      <h2 className="section-title">Quiz</h2>
-      <p className="section-desc">Answer each question, then submit. 85% or higher counts as understood.</p>
-
-      {questions.map((q, i) => (
-        <div key={i} style={{ marginBottom: 18 }}>
-          <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 8 }}>{i + 1}. {q.question}</div>
-          {q.type === 'multiple_choice' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {(q.options || []).map(opt => (
-                <label key={opt} className="row" style={{ fontSize: 13.5, cursor: 'pointer' }}>
+      {quiz.map((q, i) => (
+        <div key={q.id} className="card quiz-question">
+          <p className="quiz-question-text">
+            <span className="hint-text">Q{i + 1} · {q.topic}</span>
+            <br />
+            {q.question}
+          </p>
+          {q.type === 'mcq' ? (
+            <div className="quiz-options">
+              {q.options?.map((opt) => (
+                <label key={opt} className="quiz-option">
                   <input
                     type="radio"
-                    name={`q${i}`}
-                    checked={answers[i] === opt}
-                    onChange={() => setAnswer(i, opt)}
+                    name={q.id}
+                    checked={answers[q.id] === opt}
+                    onChange={() => setAnswers({ ...answers, [q.id]: opt })}
                   />
                   {opt}
                 </label>
               ))}
             </div>
           ) : (
-            <input type="text" placeholder="Your answer" value={answers[i] || ''} onChange={e => setAnswer(i, e.target.value)} />
+            <textarea
+              className="textarea"
+              placeholder="Type your answer..."
+              value={answers[q.id] || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+            />
           )}
         </div>
       ))}
 
-      <div className="row">
-        <button className="btn btn-primary" onClick={handleSubmit}>Submit quiz</button>
-        <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
-      </div>
+      {error && <p className="error-text">{error}</p>}
+
+      <button className="btn btn-primary" onClick={handleSubmit} disabled={!allAnswered || grading}>
+        {grading ? <span className="spinner" /> : 'Submit quiz'}
+      </button>
     </div>
   )
 }
